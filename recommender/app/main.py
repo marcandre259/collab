@@ -5,12 +5,13 @@ import sqlite3
 import polars as pl
 
 from typing import List
+from pathlib import Path
 
-from recommender.models.data_models import Movie, Review
+from recommender.models.data_models import Movie, Review, MovieReviewResponse
 
 app = FastAPI(app="Recommender API")
-
-uri = "sqlite://collab.db"
+db_path = "/Users/marc/Documents/collab/collab.db"
+uri = f"sqlite://{db_path}"
 
 df_movies = pl.read_database_uri("SELECT * FROM movies", uri=uri)
 
@@ -33,7 +34,7 @@ async def search_movie_ids(keyword: str) -> List[Movie]:
 
 @app.post("/users/")
 async def submit_review(review: Review):
-    conn = sqlite3.connect("collab.db")
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     user = review.user
@@ -45,12 +46,33 @@ async def submit_review(review: Review):
         INSERT INTO reviews (user, movie_id, review_score)
         VALUES (?, ?, ?)
         """,
-        (user, movie_id, review_score)
+        (user, movie_id, review_score),
     )
 
     conn.commit()
 
     return f"Review of {user} added"
+
+
+@app.get("/users/{user_name}")
+async def get_user_reviews(user_name: str) -> List[MovieReviewResponse]:
+    list_reviews = pl.read_database_uri(
+        f"""
+        SELECT
+            r.movie_id
+            ,  m.title
+            , m.genres
+            , r.user
+            ,r.review_score
+        FROM reviews r
+        INNER JOIN movies m ON r.movie_id = m.movieId
+        WHERE r.user = '{user_name}'
+        """,
+        uri=uri,
+    ).to_dicts()
+
+    return list_reviews
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
