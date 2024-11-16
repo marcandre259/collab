@@ -30,3 +30,9 @@ class MovieReviewResponse(BaseModel):
                 "review_score": 4.5
             }
         }
+
+class Recommendation(BaseModel):
+    movieId: int
+    title: str
+    genres: str
+    predicted_score: float

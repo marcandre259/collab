@@ -7,13 +7,29 @@ import polars as pl
 from typing import List
 from pathlib import Path
 
-from recommender.models.data_models import Movie, Review, MovieReviewResponse
+import torch
+from recommender.models.data_models import Movie, Review, MovieReviewResponse, Recommendation
+from functions import nn_model
+
+import copy
 
 app = FastAPI(app="Recommender API")
 db_path = "/Users/marc/Documents/collab/collab.db"
+project_root = Path("/Users/marc/Documents/collab")
+
 uri = f"sqlite://{db_path}"
 
 df_movies = pl.read_database_uri("SELECT * FROM movies", uri=uri)
+df_id_mappings = pl.read_parquet(
+    project_root / "data/id_chId_mappings.parquet"
+)
+
+df_item_mappings = df_id_mappings.select("movieId", "movieChId").unique()
+
+# Load main ml model
+collab_nn = torch.load(Path(project_root) / "data/models/collab_nn.pth")
+
+user_id = 610
 
 
 @app.get("/")
@@ -72,6 +88,85 @@ async def get_user_reviews(user_name: str) -> List[MovieReviewResponse]:
     ).to_dicts()
 
     return list_reviews
+
+
+@app.post("/tune/{user_name}")
+async def tune_user_model(user_name: str) -> str:
+    df_reviews = pl.read_database_uri(
+        f"""
+        SELECT
+            *
+        FROM reviews r
+        WHERE r.user = '{user_name}'
+        """,
+        uri=uri,
+    )
+
+    df_reviews = df_reviews.rename({"movie_id": "movieId"})
+
+    df_reviews = df_item_mappings.join(df_reviews, on="movieId", how="inner")
+
+    item_chIds = df_reviews["movieChId"].to_numpy()
+
+    item_scores = df_reviews["review_score"].to_numpy()
+
+    user_nn = copy.deepcopy(collab_nn)
+
+    nn_model.finetune_user(
+        user_nn, 610, item_chIds, item_scores, learning_rate=1e-2, epochs=1000
+    )
+
+    torch.save(
+        user_nn, Path(project_root) / f"data/models/nn_user_{user_name}.pth"
+    )
+
+    return f"Fine-tuned model for {user_name}"
+
+
+@app.get("/recommendations/{user_name}")
+def get_recommendations(user_name: str) -> List[Recommendation]:
+    # Use existing reviews to only make recs on unreviewed movies
+    df_reviews = pl.read_database_uri(
+        f"""
+        SELECT
+            *
+        FROM reviews r
+        WHERE r.user = '{user_name}'
+        """,
+        uri=uri,
+    )
+
+    df_reviews = df_reviews.rename({"movie_id": "movieId"})
+
+    df_item_exclusive = df_item_mappings.join(
+        df_reviews, on="movieId", how="anti"
+    )
+
+    item_ids = df_item_exclusive["movieChId"].to_numpy()
+    item_ids = [item for item in item_ids if item is not None]
+
+    user_nn = torch.load(
+        Path(project_root) / f"data/models/nn_user_{user_name}.pth"
+    )
+
+    recs_chid, scores = nn_model.get_recommendations(
+        user_nn, user_id, item_ids, top_k=10
+    )
+
+    recs_chid = recs_chid.numpy()
+    scores = scores.numpy()
+
+    df_scores = pl.DataFrame(
+        {"movieChId": recs_chid, "predicted_score": scores}
+    )
+
+    df_item_recs = df_item_mappings.join(df_scores, on="movieChId")
+
+    df_movie_recs = df_movies.join(df_item_recs, on="movieId").drop(
+        "movieChId"
+    )
+
+    return df_movie_recs.to_dicts()
 
 
 if __name__ == "__main__":

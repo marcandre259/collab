@@ -1,3 +1,4 @@
 data/
 collab.db
 venv/
+mlruns/

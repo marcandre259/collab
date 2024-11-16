@@ -10,7 +10,8 @@ from pathlib import Path
 
 import mlflow
 
-mlflow.set_experiment("model training")
+# mlflow.set_tracking_uri(uri="http://127.0.0.1:8078")
+# mlflow.set_experiment("model training")
 
 import sys
 
@@ -41,6 +42,14 @@ q = [
 ]
 
 df_ratings = df_ratings.with_columns(q)
+
+df_id_mappings = df_ratings.select(
+    ["userId", "movieId", "userChId", "movieChId"]
+).unique()
+
+df_id_mappings.write_parquet(
+    Path(project_root) / "data/id_chId_mappings.parquet"
+)
 
 # Defining parameters for model
 n_users = df_ratings.select("userId").unique().shape[0]
@@ -81,10 +90,14 @@ training_output = nn_model.train_model(
 )
 
 torch.save(
-    collab_nn.state_dict(),
-    Path(project_root) / "data/models/collab_nn_state_dict.pth",
+    collab_nn,
+    Path(project_root) / "data/models/collab_nn.pth",
 )
 
-# Tracking metrics and saving model
+# Prep output
+training_output["train_losses"] = training_output["train_losses"][-1]
+training_output["valid_losses"] = training_output["valid_losses"][-1]
+
+# # Tracking metrics and saving model
 # with mlflow.start_run():
 #     mlflow.log_metrics(training_output)
