@@ -1,0 +1,15 @@
+artifact_uri: file:///Users/marc/Documents/collab/mlruns/990157131485280552/6cf4e343e63042cb8b12eb04685b9299/artifacts
+end_time: 1731774152685
+entry_point_name: ''
+experiment_id: '990157131485280552'
+lifecycle_stage: active
+run_id: 6cf4e343e63042cb8b12eb04685b9299
+run_name: abundant-frog-269
+run_uuid: 6cf4e343e63042cb8b12eb04685b9299
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1731774151870
+status: 4
+tags: []
+user_id: marc
