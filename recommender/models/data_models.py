@@ -13,6 +13,11 @@ class Review(BaseModel):
     review_score: float
 
 
+class ReviewDelete(BaseModel):
+    user: str
+    movie_id: int
+
+
 class MovieReviewResponse(BaseModel):
     movie_id: int
     title: str

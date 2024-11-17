@@ -8,7 +8,13 @@ from typing import List
 from pathlib import Path
 
 import torch
-from recommender.models.data_models import Movie, Review, MovieReviewResponse, Recommendation
+from recommender.models.data_models import (
+    Movie,
+    Review,
+    ReviewDelete,
+    MovieReviewResponse,
+    Recommendation,
+)
 from functions import nn_model
 
 import copy
@@ -167,6 +173,29 @@ def get_recommendations(user_name: str) -> List[Recommendation]:
     )
 
     return df_movie_recs.to_dicts()
+
+
+@app.delete("/reviews/")
+async def delete_review(review_delete: ReviewDelete) -> str:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    user = review_delete.user
+    movie_id = review_delete.movie_id
+
+    cursor.execute(
+        f"""
+        DELETE FROM reviews
+        WHERE user = '{user}'
+            AND movie_id = {movie_id}
+        """
+    )
+
+    conn.commit()
+
+    return (
+        f"Review of movie {movie_id} from user {user} succesfully deleted"
+    )
 
 
 if __name__ == "__main__":
