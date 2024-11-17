@@ -28,6 +28,9 @@ class CollabNN(nn.Module):
         self.user_embeddings = nn.Embedding(n_users + 1, n_embeddings)
         self.item_embeddings = nn.Embedding(n_items, n_embeddings)
 
+        self.user_bias = nn.Embedding(n_users + 1, 1)
+        self.item_bias = nn.Embedding(n_items, 1)
+
         self.fc_layers = nn.Sequential(
             nn.Linear(n_embeddings * 2, 128),
             nn.ReLU(),
@@ -36,18 +39,24 @@ class CollabNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.2),
             nn.Linear(64, 1),
-            BoundedSigmoid(min_outcome, max_outcome),
         )
+
+        self.bounded_sigmoid = BoundedSigmoid(min_outcome, max_outcome)
 
     def forward(self, user_ids, item_ids):
         user_embeds = self.user_embeddings(user_ids)
         item_embeds = self.item_embeddings(item_ids)
 
+        user_biases = self.user_bias(user_ids)
+        item_biases = self.item_bias(item_ids)
+
         # That's fine, because we pick n from users and n form items
         # (repeating)
         x = torch.cat([user_embeds, item_embeds], dim=1)
 
-        return self.fc_layers(x)
+        x = self.bounded_sigmoid(self.fc_layers(x) + user_biases + item_biases)
+
+        return x
 
 
 def train_model(
