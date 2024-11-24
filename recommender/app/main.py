@@ -17,18 +17,22 @@ from recommender.models.data_models import (
 )
 from functions import nn_model
 
+from sqlalchemy import create_engine
+
 import copy
 
 app = FastAPI(app="Recommender API")
-db_path = "/Users/marc/Documents/collab/collab.db"
-project_root = Path("/Users/marc/Documents/collab")
+db_path = "collab.db"
+project_root = Path(".")
 
-uri = f"sqlite://{db_path}"
+uri = f"sqlite:///{db_path}"
 
-df_movies = pl.read_database_uri("SELECT * FROM movies", uri=uri)
-df_id_mappings = pl.read_parquet(
-    project_root / "data/id_chId_mappings.parquet"
-)
+engine = create_engine(uri)
+
+with engine.connect() as conn:
+    df_movies = pl.read_database("SELECT * FROM movies", conn)
+
+df_id_mappings = pl.read_parquet(project_root / "data/id_chId_mappings.parquet")
 
 df_item_mappings = df_id_mappings.select("movieId", "movieChId").unique()
 
@@ -78,35 +82,37 @@ async def submit_review(review: Review):
 
 @app.get("/users/{user_name}")
 async def get_user_reviews(user_name: str) -> List[MovieReviewResponse]:
-    list_reviews = pl.read_database_uri(
-        f"""
-        SELECT
-            r.movie_id
-            ,  m.title
-            , m.genres
-            , r.user
-            ,r.review_score
-        FROM reviews r
-        INNER JOIN movies m ON r.movie_id = m.movieId
-        WHERE r.user = '{user_name}'
-        """,
-        uri=uri,
-    ).to_dicts()
+    with engine.connect() as conn:
+        list_reviews = pl.read_database(
+            f"""
+            SELECT
+                r.movie_id
+                ,  m.title
+                , m.genres
+                , r.user
+                ,r.review_score
+            FROM reviews r
+            INNER JOIN movies m ON r.movie_id = m.movieId
+            WHERE r.user = '{user_name}'
+            """,
+            conn,
+        ).to_dicts()
 
     return list_reviews
 
 
 @app.post("/tune/{user_name}")
 async def tune_user_model(user_name: str) -> str:
-    df_reviews = pl.read_database_uri(
-        f"""
-        SELECT
-            *
-        FROM reviews r
-        WHERE r.user = '{user_name}'
-        """,
-        uri=uri,
-    )
+    with engine.connect() as conn:
+        df_reviews = pl.read_database(
+            f"""
+            SELECT
+                *
+            FROM reviews r
+            WHERE r.user = '{user_name}'
+            """,
+            conn,
+        )
 
     df_reviews = df_reviews.rename({"movie_id": "movieId"})
 
@@ -122,9 +128,7 @@ async def tune_user_model(user_name: str) -> str:
         user_nn, 610, item_chIds, item_scores, learning_rate=1e-2, epochs=1000
     )
 
-    torch.save(
-        user_nn, Path(project_root) / f"data/models/nn_user_{user_name}.pth"
-    )
+    torch.save(user_nn, Path(project_root) / f"data/models/nn_user_{user_name}.pth")
 
     return f"Fine-tuned model for {user_name}"
 
@@ -132,28 +136,25 @@ async def tune_user_model(user_name: str) -> str:
 @app.get("/recommendations/{user_name}")
 def get_recommendations(user_name: str) -> List[Recommendation]:
     # Use existing reviews to only make recs on unreviewed movies
-    df_reviews = pl.read_database_uri(
-        f"""
-        SELECT
-            *
-        FROM reviews r
-        WHERE r.user = '{user_name}'
-        """,
-        uri=uri,
-    )
+    with engine.connect() as conn:
+        df_reviews = pl.read_database(
+            f"""
+            SELECT
+                *
+            FROM reviews r
+            WHERE r.user = '{user_name}'
+            """,
+            conn,
+        )
 
     df_reviews = df_reviews.rename({"movie_id": "movieId"})
 
-    df_item_exclusive = df_item_mappings.join(
-        df_reviews, on="movieId", how="anti"
-    )
+    df_item_exclusive = df_item_mappings.join(df_reviews, on="movieId", how="anti")
 
     item_ids = df_item_exclusive["movieChId"].to_numpy()
     item_ids = [item for item in item_ids if item is not None]
 
-    user_nn = torch.load(
-        Path(project_root) / f"data/models/nn_user_{user_name}.pth"
-    )
+    user_nn = torch.load(Path(project_root) / f"data/models/nn_user_{user_name}.pth")
 
     recs_chid, scores = nn_model.get_recommendations(
         user_nn, user_id, item_ids, top_k=10
@@ -162,15 +163,11 @@ def get_recommendations(user_name: str) -> List[Recommendation]:
     recs_chid = recs_chid.numpy()
     scores = scores.numpy()
 
-    df_scores = pl.DataFrame(
-        {"movieChId": recs_chid, "predicted_score": scores}
-    )
+    df_scores = pl.DataFrame({"movieChId": recs_chid, "predicted_score": scores})
 
     df_item_recs = df_item_mappings.join(df_scores, on="movieChId")
 
-    df_movie_recs = df_movies.join(df_item_recs, on="movieId").drop(
-        "movieChId"
-    )
+    df_movie_recs = df_movies.join(df_item_recs, on="movieId").drop("movieChId")
 
     return df_movie_recs.to_dicts()
 
@@ -193,9 +190,7 @@ async def delete_review(review_delete: ReviewDelete) -> str:
 
     conn.commit()
 
-    return (
-        f"Review of movie {movie_id} from user {user} succesfully deleted"
-    )
+    return f"Review of movie {movie_id} from user {user} succesfully deleted"
 
 
 if __name__ == "__main__":
